@@ -114,7 +114,7 @@ public void updateData(DataObject dataObject) {
 这是Cache Aside Pattern的改进版，查询和更新请求并发的问题同样存在
 
 将方法置于事务中执行，缓存操作失败抛出RuntimeException会回滚事务，保证了原子性
-缺点是redis远程操作会导致事务执行时间变长，降低并发
+缺点是远程操作会导致事务执行时间变长，降低并发
 
 &nbsp;
 
