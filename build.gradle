@@ -27,6 +27,8 @@ dependencies {
     compile group: 'com.fasterxml.jackson.core', name: 'jackson-databind', version: '2.10.0'
     compile 'org.redisson:redisson-spring-boot-starter:3.11.5'
     compile group: 'org.apache.commons', name: 'commons-lang3', version: '3.10'
+    // https://mvnrepository.com/artifact/com.redislabs/jrebloom
+    compile group: 'com.redislabs', name: 'jrebloom', version: '1.2.0'
 
     testImplementation('org.springframework.boot:spring-boot-starter-test') {
         exclude group: 'org.junit.vintage', module: 'junit-vintage-engine'

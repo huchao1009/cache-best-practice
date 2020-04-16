@@ -3,7 +3,9 @@ package com.opensource.cache;
 import com.fasterxml.jackson.annotation.JsonAutoDetect;
 import com.fasterxml.jackson.annotation.PropertyAccessor;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.rebloom.client.ClusterClient;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -14,13 +16,16 @@ import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.serializer.Jackson2JsonRedisSerializer;
 import org.springframework.data.redis.serializer.StringRedisSerializer;
+import redis.clients.jedis.HostAndPort;
 import redis.clients.jedis.JedisCluster;
 import redis.clients.jedis.JedisPoolConfig;
 
 import javax.annotation.Resource;
 import java.lang.reflect.Field;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Created by double on 2019/11/4.
@@ -33,11 +38,23 @@ public class RedisAutoConfiguration {
     @Resource
     private RedisProperties redisProperties;
 
+    @Bean
+    @ConditionalOnMissingBean(ClusterClient.class)
+    public ClusterClient clusterClient(JedisPoolConfig jedisPoolConfig) {
+        Set<HostAndPort> nodes = new HashSet<>();
+        String[] cNodes = redisProperties.getNodes().split(",");
+        for (String node : cNodes) {
+            String[] hp = node.split(":");
+            nodes.add(new HostAndPort(hp[0], Integer.parseInt(hp[1])));
+        }
+        return new ClusterClient(nodes, jedisPoolConfig);
+    }
+
     /**
      * 配置 Redis 连接池信息
      */
     @Bean
-    public JedisPoolConfig getJedisPoolConfig() {
+    public JedisPoolConfig jedisPoolConfig() {
         JedisPoolConfig jedisPoolConfig = new JedisPoolConfig();
         jedisPoolConfig.setMaxIdle(redisProperties.getMaxIdle());
         jedisPoolConfig.setMaxWaitMillis(redisProperties.getMaxWait());
@@ -50,7 +67,7 @@ public class RedisAutoConfiguration {
      * 配置 Redis Cluster 信息
      */
     @Bean
-    public RedisClusterConfiguration getJedisCluster() {
+    public RedisClusterConfiguration redisClusterConfiguration() {
         RedisClusterConfiguration redisClusterConfiguration = new RedisClusterConfiguration();
         redisClusterConfiguration.setMaxRedirects(redisProperties.getMaxRedirects());
 
@@ -70,8 +87,8 @@ public class RedisAutoConfiguration {
      * 配置 Redis 连接工厂
      */
     @Bean
-    public JedisConnectionFactory getJedisConnectionFactory() {
-        JedisConnectionFactory jedisConnectionFactory = new JedisConnectionFactory(getJedisCluster(), getJedisPoolConfig());
+    public JedisConnectionFactory jedisConnectionFactory(RedisClusterConfiguration redisClusterConfiguration, JedisPoolConfig jedisPoolConfig) {
+        JedisConnectionFactory jedisConnectionFactory = new JedisConnectionFactory(redisClusterConfiguration, jedisPoolConfig);
         return jedisConnectionFactory;
     }
 
@@ -81,9 +98,9 @@ public class RedisAutoConfiguration {
      * 存储二进制字节码，导致key会出现乱码，所以自定义序列化类
      */
     @Bean
-    public RedisTemplate<Object, Object> redisTemplate() {
+    public RedisTemplate<Object, Object> redisTemplate(JedisConnectionFactory jedisConnectionFactory) {
         RedisTemplate<Object, Object> redisTemplate = new RedisTemplate<>();
-        redisTemplate.setConnectionFactory(getJedisConnectionFactory());
+        redisTemplate.setConnectionFactory(jedisConnectionFactory);
         Jackson2JsonRedisSerializer jackson2JsonRedisSerializer = new Jackson2JsonRedisSerializer(Object.class);
         ObjectMapper objectMapper = new ObjectMapper();
         objectMapper.setVisibility(PropertyAccessor.ALL, JsonAutoDetect.Visibility.ANY);
@@ -99,9 +116,9 @@ public class RedisAutoConfiguration {
     }
 
     @Bean
-    public StringRedisTemplate stringredisTemplate() {
+    public StringRedisTemplate stringredisTemplate(JedisConnectionFactory jedisConnectionFactory) {
         StringRedisTemplate stringredisTemplate = new StringRedisTemplate();
-        stringredisTemplate.setConnectionFactory(getJedisConnectionFactory());
+        stringredisTemplate.setConnectionFactory(jedisConnectionFactory);
         return stringredisTemplate;
     }
 
@@ -109,8 +126,8 @@ public class RedisAutoConfiguration {
      * 通过反射获取spring管理的JedisCluster对象
      */
     @Bean
-    public JedisCluster jedisCluster() {
-        return (JedisCluster) getFieldValueByFieldName("cluster", getJedisConnectionFactory());
+    public JedisCluster jedisCluster(JedisConnectionFactory jedisConnectionFactory) {
+        return (JedisCluster) getFieldValueByFieldName("cluster", jedisConnectionFactory);
     }
 
     /**

@@ -1,5 +1,6 @@
 package com.opensource.cache;
 
+import io.rebloom.client.ClusterClient;
 import org.apache.commons.lang3.RandomUtils;
 import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
@@ -9,38 +10,52 @@ import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.stereotype.Service;
 import org.springframework.util.ObjectUtils;
 
+import javax.annotation.PostConstruct;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 @Service
 public class DataObjectService {
-    private final static String CACHE_KEY = "test:data:";
+    private final static String DATA_CACHE_KEY = "test:data:";
+    private final static String DATA_LOCK_NAME = "lock:" + DATA_CACHE_KEY;
+    private final static String DATA_BF_NAME = DATA_CACHE_KEY + ":bf";
     private final static long ID_NOT_EXISTS = -1L;
+
     @Autowired
     private RedissonClient redissonClient;
 
     @Autowired
     private RedisTemplate redisTemplate;
 
+    @Autowired
+    private ClusterClient clusterClient;
+
     /**
      * HashMap模拟数据库数据
      */
     private static Map<Long, DataObject> dbDataList = new HashMap<>();
 
-    static {
+    @PostConstruct
+    private void initData() {
         for (long i = 1; i <= 100; i++) {
             dbDataList.put(i, new DataObject(i, "name:" + i));
+            clusterClient.add(DATA_BF_NAME, i + "");
         }
     }
 
     public void addData(DataObject dataObject) {
         //第一步，保存到数据库
         this.saveToDB(dataObject);
-        //第二步，保存到缓存
-        setDataToCache(dataObject.getId(), dataObject);
+        //第二步，添加到布隆过滤器
+        try {
+            clusterClient.add(DATA_BF_NAME, ObjectUtils.nullSafeToString(dataObject.getId()));
+        } catch (Exception e) {
+            throw new RuntimeException();
+        }
     }
 
+    //    @Transactional
     public void deleteData(Long id) {
         //第一步，操作数据库
         deleteFromDB(id);
@@ -131,6 +146,7 @@ public class DataObjectService {
 
     /**
      * 缓存穿透、缓存击穿、缓存雪崩问题
+     *
      * @param id
      * @return
      */
@@ -149,11 +165,16 @@ public class DataObjectService {
     }
 
     public DataObject getData(Long id) {
+        //布隆过滤器中不存在，则直接返回空
+        if (!clusterClient.exists(DATA_BF_NAME, ObjectUtils.nullSafeToString(id))) {
+            System.out.println("布隆过滤器中不存在, id: " + id);
+            return null;
+        }
         //从缓存读取数据
         DataObject result = getDataFromCache(id);
         if (result == null) {
             //缓存不存在，从数据库查询数据的过程加上锁，避免缓存击穿导致数据库压力过大
-            RLock lock = redissonClient.getLock("lock:" + CACHE_KEY + id);
+            RLock lock = redissonClient.getLock(DATA_LOCK_NAME + id);
             lock.lock(15, TimeUnit.SECONDS);
             if (lock.isLocked()) {
                 try {
@@ -181,8 +202,7 @@ public class DataObjectService {
         return result;
     }
 
-    public Boolean deleteCache(Long id)
-    {
+    public Boolean deleteCache(Long id) {
         return this.deleteFromCache(id);
     }
 
@@ -192,7 +212,7 @@ public class DataObjectService {
     }
 
     private void updateFromDB(DataObject dataObject) {
-        dbDataList.put(dataObject.getId(),dataObject);
+        dbDataList.put(dataObject.getId(), dataObject);
         System.out.println("从数据库修改数据");
     }
 
@@ -204,7 +224,7 @@ public class DataObjectService {
     private DataObject getDataFromDB(Long id) {
         try {
             //睡眠100~800毫秒，模拟数据库IO慢操作
-            TimeUnit.MILLISECONDS.sleep(RandomUtils.nextLong(100,800));
+            TimeUnit.MILLISECONDS.sleep(RandomUtils.nextLong(100, 800));
         } catch (InterruptedException e) {
             e.printStackTrace();
         }
@@ -215,7 +235,7 @@ public class DataObjectService {
 
     private Boolean deleteFromCache(Long id) {
         System.out.println("从缓存中删除数据, id: " + id);
-        return redisTemplate.delete(CACHE_KEY + id);
+        return redisTemplate.delete(DATA_CACHE_KEY + id);
     }
 
     /**
@@ -228,10 +248,10 @@ public class DataObjectService {
         System.out.println("设置数据到【缓存】, DataObject: " + ObjectUtils.nullSafeToString(dataObject));
         if (dataObject != null) {
             //设置缓存过期时间时，加上一个随机值，避免同时过期导致缓存雪崩
-            redisTemplate.opsForValue().set(CACHE_KEY + id, dataObject, 30 * 60 + (RandomUtils.nextInt(10, 300)), TimeUnit.SECONDS);
+            redisTemplate.opsForValue().set(DATA_CACHE_KEY + id, dataObject, 30 * 60 + (RandomUtils.nextInt(10, 300)), TimeUnit.SECONDS);
         } else {
             //设置特殊占位对象，并设置较短的过期时间，防止缓存穿透
-            redisTemplate.opsForValue().set(CACHE_KEY + id, new DataObject(ID_NOT_EXISTS, null), 30 + (RandomUtils.nextInt(1, 10)), TimeUnit.SECONDS);
+            redisTemplate.opsForValue().set(DATA_CACHE_KEY + id, new DataObject(ID_NOT_EXISTS, null), 30 + (RandomUtils.nextInt(1, 10)), TimeUnit.SECONDS);
         }
     }
 
@@ -243,7 +263,7 @@ public class DataObjectService {
      */
     private DataObject getDataFromCache(Long id) {
         ValueOperations<String, DataObject> valueOperations = redisTemplate.opsForValue();
-        DataObject dataObject = valueOperations.get(CACHE_KEY + id);
+        DataObject dataObject = valueOperations.get(DATA_CACHE_KEY + id);
         System.out.println("从【缓存】中获取数据, id: " + id + ", DataObject: " + ObjectUtils.nullSafeToString(dataObject));
         return dataObject;
     }
