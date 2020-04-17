@@ -5,6 +5,22 @@
 ##### 1、先淘汰缓存，再更新数据库
 
 ```java
+public DataObject getData1(Long id) {
+  //从缓存读取数据
+  DataObject result = getDataFromCache(id);
+  if (result == null) {
+    // 从数据库查询数据
+    result = getDataFromDB(id);
+    if (result != null) {
+      // 将查询到的数据写入缓存
+      setDataToCache(id, result);
+    }
+  }
+  return result;
+}
+```
+
+```java
 public void updateData1(DataObject dataObject) {
   //第一步，淘汰缓存
   deleteFromCache(dataObject.getId());

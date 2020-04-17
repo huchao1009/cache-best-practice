@@ -44,6 +44,7 @@ public class DataObjectService {
         }
     }
 
+    //    @Transactional
     public void addData(DataObject dataObject) {
         //第一步，保存到数据库
         this.saveToDB(dataObject);
@@ -165,11 +166,11 @@ public class DataObjectService {
     }
 
     public DataObject getData(Long id) {
-        //布隆过滤器中不存在，则直接返回空
-        if (!clusterClient.exists(DATA_BF_NAME, ObjectUtils.nullSafeToString(id))) {
-            System.out.println("布隆过滤器中不存在, id: " + id);
-            return null;
-        }
+//        //布隆过滤器中不存在，则直接返回空
+//        if (!clusterClient.exists(DATA_BF_NAME, ObjectUtils.nullSafeToString(id))) {
+//            System.out.println("布隆过滤器中不存在, id: " + id);
+//            return null;
+//        }
         //从缓存读取数据
         DataObject result = getDataFromCache(id);
         if (result == null) {
